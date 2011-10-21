@@ -1,0 +1,12 @@
+<!--#set var="page" value="missing-page" -->
+<!--#if expr="$QUERY_STRING = /page=([a-zA-Z0-9\-]+)/" -->
+<!--#set var="page" value="$1" -->
+<!--#endif -->
+//<!--#echo var="page" --> 
+<!--#set var="callback" value="callback" -->
+<!--#if expr="$QUERY_STRING = /callback=([a-zA-Z0-9]+)/" -->
+<!--#set var="callback" value="$1" -->
+<!--#endif -->
+<!--#echo var="callback" --> (
+<!--#include virtual="/data/pages/${page}" -->
+);

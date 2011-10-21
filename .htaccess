@@ -12,6 +12,7 @@ RewriteRule ^(js/.*)$ /client/$1
 RewriteCond %{REQUEST_URI} !^/client/
 RewriteRule ^client.js$ /client/client.js
 
+RewriteCond %{QUERY_STRING} !callback=
 RewriteCond %{REQUEST_URI} !^/data/
 RewriteRule ^(.*)\.json$ /data/pages/$1 
 
@@ -28,3 +29,11 @@ RewriteRule .* - [T=application/json]
 #SvenDowideit@fosiki.com's gravatar - you'll want to change this :)
 RewriteRule ^favicon.png$ http://en.gravatar.com/userimage/3255925/c3addcadf86caced332408a2e0b4d68b.jpeg
 
+#lets see if we can make jsonp ?callback= requests work using mod_include :)
+AddHandler server-parsed .jsonp
+AddType text/javascript .jsonp
+
+RewriteCond %{QUERY_STRING} callback=(.*)
+RewriteCond %{REQUEST_URI} !^/data/
+RewriteRule ^(.*)\.json$ /index.jsonp?page=$1&callback=%1
+#TODO: need to work out a 404 way to deal with missing page too
