@@ -1,10 +1,15 @@
 (function() {
-  var __slice = Array.prototype.slice;
+  var __slice = Array.prototype.slice, __indexOf = Array.prototype.indexOf || function(item) {
+    for (var i = 0, l = this.length; i < l; i++) {
+      if (this[i] === item) return i;
+    }
+    return -1;
+  };
   Array.prototype.last = function() {
     return this[this.length - 1];
   };
   $(function() {
-    var addToJournal, bindDragAndDrop, formatTime, getItem, getPlugin, pushToLocal, pushToServer, putAction, randomByte, randomBytes, refresh, renderInternalLink, resolveLinks, scripts, textEditor, useLocalStorage;
+    var LEFTARROW, RIGHTARROW, addToJournal, createPage, findPage, formatTime, getItem, getPlugin, pagesInDom, pushToLocal, pushToServer, putAction, randomByte, randomBytes, refresh, renderInternalLink, resolveLinks, scripts, scrollTo, setActive, setState, showState, startPages, textEditor, useLocalStorage;
     window.wiki = {};
     window.dialog = $('<div></div>').html('This dialog will show every time!').dialog({
       autoOpen: false,
@@ -52,7 +57,7 @@
         return actionElement.css("background-image", "url(//" + action.site + "/favicon.png)").attr("href", "//" + action.site + "/" + (pageElement.attr('id')) + ".html").data("site", action.site).data("slug", pageElement.attr('id'));
       }
     };
-    putAction = function(pageElement, action) {
+    putAction = wiki.putAction = function(pageElement, action) {
       if (useLocalStorage()) {
         pushToLocal(pageElement, action);
         return pageElement.addClass("local");
@@ -169,63 +174,32 @@
       }
       return null;
     };
-    getPlugin = function(plugin) {
+    getPlugin = wiki.getPlugin = function(plugin) {
       if (window.plugins[plugin] == null) {
         wiki.getScript("plugins/" + plugin + ".js");
       }
       return window.plugins[plugin];
     };
-    bindDragAndDrop = function(div, item, allowedTypes) {
-      if (allowedTypes == null) {
-        allowedTypes = [];
-      }
-      ["dragenter", "dragover"].map(function(eventName) {
-        return div.bind(eventName, function(evt) {
-          return evt.preventDefault();
+    scrollTo = function(el) {
+      var contentWidth, maxX, minX, target, width;
+      minX = $("body").scrollLeft();
+      maxX = minX + $("body").width();
+      target = el.position().left;
+      width = el.outerWidth(true);
+      contentWidth = $(".page").outerWidth(true) * $(".page").size();
+      if (target < minX) {
+        return $("body").animate({
+          scrollLeft: target
         });
-      });
-      return div.bind("drop", function(dropEvent) {
-        var file, finishDrop, majorType, minorType, reader, _ref;
-        finishDrop = function(type, handler) {
-          return function(loadEvent) {
-            var action, pageDiv;
-            item.type = type;
-            handler(loadEvent);
-            div.empty();
-            div.removeClass("factory").addClass(type);
-            pageDiv = div.parents('.page:first');
-            action = {
-              type: 'edit',
-              id: item.id,
-              item: item
-            };
-            putAction(pageDiv, action);
-            return getPlugin(type).emit(div, item);
-          };
-        };
-        dropEvent.preventDefault();
-        file = dropEvent.originalEvent.dataTransfer.files[0];
-        _ref = file.type.split("/"), majorType = _ref[0], minorType = _ref[1];
-        if (allowedTypes.filter(function(t) {
-          return t === majorType;
-        }).length === 0) {
-          return alert("Uploads of type " + majorType + " not supported for this item");
-        } else {
-          reader = new FileReader();
-          if (majorType === "image") {
-            reader.onload = finishDrop("image", function(loadEvent) {
-              item.url = loadEvent.target.result;
-              return item.caption || (item.caption = "Uploaded image");
-            });
-            return reader.readAsDataURL(file);
-          } else if (majorType === "text") {
-            reader.onload = finishDrop("paragraph", function(loadEvent) {
-              return item.text = loadEvent.target.result;
-            });
-            return reader.readAsText(file);
-          }
-        }
-      });
+      } else if (target + width > maxX) {
+        return $("body").animate({
+          scrollLeft: target - ($("body").width() - width)
+        });
+      } else if (maxX > $(".pages").outerWidth()) {
+        return $("body").animate({
+          scrollLeft: Math.min(target, contentWidth - $("body").width())
+        });
+      }
     };
     window.plugins = {
       paragraph: {
@@ -242,9 +216,7 @@
         emit: function(div, item) {
           return div.append("<img src=\"" + item.url + "\"> <p>" + (resolveLinks(item.caption)) + "</p>");
         },
-        bind: function(div, item) {
-          return bindDragAndDrop(div, item, ["image"]);
-        }
+        bind: function(div, item) {}
       },
       chart: {
         emit: function(div, item) {
@@ -258,18 +230,6 @@
             _ref = item.data[Math.floor(item.data.length * e.offsetX / e.target.offsetWidth)], time = _ref[0], sample = _ref[1];
             $(e.target).text(sample.toFixed(1));
             return $(e.target).siblings("p").last().html(formatTime(time));
-          });
-        }
-      },
-      factory: {
-        emit: function(div, item) {
-          return div.append('<p>Double-Click to Edit<br>Drop Text or Image to Insert</p>');
-        },
-        bind: function(div, item) {
-          bindDragAndDrop(div, item, ["image", "text"]);
-          return div.dblclick(function() {
-            div.removeClass('factory').addClass(item.type = 'paragraph');
-            return textEditor(div, item);
           });
         }
       },
@@ -299,7 +259,7 @@
       slug = $(pageElement).attr('id');
       site = $(pageElement).data('site');
       pageElement.find(".add-factory").live("click", function(evt) {
-        var before, beforeElement, item, itemElement;
+        var before, beforeElement, factory, item, itemElement;
         evt.preventDefault();
         item = {
           type: "factory",
@@ -311,8 +271,9 @@
         }).data('item', item);
         itemElement.data('pageElement', pageElement);
         pageElement.find(".story").append(itemElement);
-        plugins.factory.emit(itemElement, item);
-        plugins.factory.bind(itemElement, item);
+        factory = getPlugin('factory');
+        factory.emit(itemElement, item);
+        factory.bind(itemElement, item);
         beforeElement = itemElement.prev('.item');
         before = getItem(beforeElement);
         return putAction(pageElement, {
@@ -417,6 +378,92 @@
         }
       }
     };
+    setState = function(state) {
+      var page, url;
+      if (History.enabled) {
+        url = ((function() {
+          var _i, _len, _ref, _results;
+          _ref = state.pages;
+          _results = [];
+          for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+            page = _ref[_i];
+            _results.push("/view/" + page);
+          }
+          return _results;
+        })()).join('');
+        return History.pushState(state, state.active, url);
+      }
+    };
+    setActive = function(page) {
+      var state;
+      if (History.enabled) {
+        state = History.getState().data;
+        state.active = page;
+        return setState(state);
+      }
+    };
+    showState = function(state) {
+      var name, newPages, oldPages, previousPage, _i, _j, _len, _len2;
+      oldPages = pagesInDom();
+      newPages = state.pages;
+      previousPage = newPages;
+      if (!newPages) {
+        return;
+      }
+      for (_i = 0, _len = newPages.length; _i < _len; _i++) {
+        name = newPages[_i];
+        if (__indexOf.call(oldPages, name) >= 0) {
+          delete oldPages[oldPages.indexOf(name)];
+        } else {
+          createPage(name).insertAfter(previousPage).each(refresh);
+        }
+        previousPage = findPage(name);
+      }
+      for (_j = 0, _len2 = oldPages.length; _j < _len2; _j++) {
+        name = oldPages[_j];
+        name && findPage(name).remove();
+      }
+      $(".active").removeClass("active");
+      return scrollTo($("#" + state.active).addClass("active"));
+    };
+    History.Adapter.bind(window, 'statechange', function() {
+      var state;
+      if (state = History.getState().data) {
+        return showState(state);
+      }
+    });
+    LEFTARROW = 37;
+    RIGHTARROW = 39;
+    $(document).keydown(function(event) {
+      var direction, newIndex, state;
+      direction = (function() {
+        switch (event.which) {
+          case LEFTARROW:
+            return -1;
+          case RIGHTARROW:
+            return +1;
+        }
+      })();
+      if (direction && History.enabled) {
+        state = History.getState().data;
+        newIndex = state.pages.indexOf(state.active) + direction;
+        if ((0 <= newIndex && newIndex < state.pages.length)) {
+          state.active = state.pages[newIndex];
+        }
+        return setState(state);
+      }
+    });
+    pagesInDom = function() {
+      return $.makeArray($(".page").map(function(_, el) {
+        return el.id;
+      }));
+    };
+    createPage = function(name) {
+      return $("<div/>").attr('id', name).addClass("page");
+    };
+    findPage = function(name) {
+      return $("#" + name);
+    };
     $(document).ajaxError(function(event, request, settings) {
       console.log([event, request, settings]);
       return $('.main').prepend("<li class='error'>Error on " + settings.url + "<br/>" + request.responseText + "</li>");
@@ -437,8 +484,12 @@
           return window.dialog.dialog('open');
         });
       }
+    }).delegate('.page', 'click', function(e) {
+      if (!$(e.target).is("a")) {
+        return setActive(this.id);
+      }
     }).delegate('.internal', 'click', function(e) {
-      var name, newPage, page, pages, site;
+      var name, newPage, site;
       e.preventDefault();
       name = $(e.target).data('pageName');
       site = $(e.target).attr('site');
@@ -451,20 +502,10 @@
       }
       newPage.appendTo('.main').each(refresh);
       if (History.enabled) {
-        pages = $.makeArray($(".page").map(function(_, el) {
-          return el.id;
-        }));
-        return History.pushState({
-          pages: pages
-        }, name, ((function() {
-          var _i, _len, _results;
-          _results = [];
-          for (_i = 0, _len = pages.length; _i < _len; _i++) {
-            page = pages[_i];
-            _results.push("/view/" + page);
-          }
-          return _results;
-        })()).join(''));
+        return setState({
+          pages: pagesInDom(),
+          active: name
+        });
       }
     }).delegate('.action', 'hover', function() {
       return $('#' + $(this).data('itemId')).toggleClass('target');
@@ -478,6 +519,11 @@
     useLocalStorage = function() {
       return $('#localEditing').is(':checked');
     };
-    return $('.page').each(refresh);
+    $('.page').each(refresh);
+    startPages = pagesInDom();
+    return setState({
+      pages: startPages,
+      active: startPages[startPages.length - 1]
+    });
   });
 }).call(this);

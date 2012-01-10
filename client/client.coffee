@@ -13,7 +13,7 @@ $ ->
 
   randomByte = -> (((1+Math.random())*0x100)|0).toString(16).substring(1)
   randomBytes = (n) -> (randomByte() for [1..n]).join('')
-  
+
   renderInternalLink = (match, name) ->
     #if there is a | in the link, treat it as a remote wiki server link
     site=null
@@ -51,7 +51,7 @@ $ ->
         .data("site", action.site)
         .data("slug", pageElement.attr('id'))
 
-  putAction = (pageElement, action) ->
+  putAction = wiki.putAction = (pageElement, action) ->
     if useLocalStorage()
       pushToLocal(pageElement, action)
       pageElement.addClass("local")
@@ -131,44 +131,24 @@ $ ->
         console.dir $(i).data('item')
     null
 
-  getPlugin = (plugin) ->
+  getPlugin = wiki.getPlugin = (plugin) ->
     wiki.getScript "plugins/#{plugin}.js" unless window.plugins[plugin]?
     window.plugins[plugin]
 
-  bindDragAndDrop = (div, item, allowedTypes = []) ->
-    ["dragenter", "dragover"].map (eventName) ->
-      div.bind eventName, (evt) -> evt.preventDefault()
+  scrollTo = (el) ->
+    minX = $("body").scrollLeft()
+    maxX = minX + $("body").width()
+    target = el.position().left
+    width = el.outerWidth(true)
+    contentWidth = $(".page").outerWidth(true) * $(".page").size()
 
-    div.bind "drop", (dropEvent) ->
+    if target < minX
+      $("body").animate scrollLeft: target
+    else if target + width > maxX
+      $("body").animate scrollLeft: target - ($("body").width() - width)
+    else if maxX > $(".pages").outerWidth()
+      $("body").animate scrollLeft: Math.min(target, contentWidth - $("body").width())
 
-      finishDrop = (type, handler) ->
-        (loadEvent) ->
-          item.type = type
-          handler loadEvent
-          div.empty()
-          div.removeClass("factory").addClass(type)
-          pageDiv = div.parents('.page:first')
-          action = {type: 'edit', id: item.id, item: item}
-          putAction(pageDiv, action)
-          getPlugin(type).emit(div, item)
-
-      dropEvent.preventDefault()
-      file = dropEvent.originalEvent.dataTransfer.files[0]
-      [majorType, minorType] = file.type.split("/")
-
-      if allowedTypes.filter((t) -> t == majorType).length == 0
-        alert("Uploads of type #{majorType} not supported for this item")
-      else
-        reader = new FileReader()
-        if majorType == "image"
-          reader.onload = finishDrop "image", (loadEvent) ->
-            item.url = loadEvent.target.result
-            item.caption ||= "Uploaded image"
-          reader.readAsDataURL(file)
-        else if majorType == "text"
-          reader.onload = finishDrop "paragraph", (loadEvent) ->
-            item.text = loadEvent.target.result
-          reader.readAsText(file)
 
 # PLUGINS for each story item type
 
@@ -179,7 +159,7 @@ $ ->
         div.dblclick -> textEditor div, item
     image:
       emit: (div, item) -> div.append "<img src=\"#{item.url}\"> <p>#{resolveLinks(item.caption)}</p>"
-      bind: (div, item) -> bindDragAndDrop(div, item, ["image"])
+      bind: (div, item) ->
     chart:
       emit: (div, item) ->
         chartElement = $('<p />').addClass('readout').appendTo(div).text(item.data.last().last())
@@ -189,13 +169,6 @@ $ ->
           [time, sample] = item.data[Math.floor(item.data.length * e.offsetX / e.target.offsetWidth)]
           $(e.target).text sample.toFixed(1)
           $(e.target).siblings("p").last().html formatTime(time)
-    factory:
-      emit: (div, item) -> div.append '<p>Double-Click to Edit<br>Drop Text or Image to Insert</p>'
-      bind: (div, item) ->
-        bindDragAndDrop(div, item, ["image", "text"])
-        div.dblclick ->
-          div.removeClass('factory').addClass(item.type='paragraph')
-          textEditor div, item
     changes:
       emit: (div, item) ->
         div.append ul = $('<ul />').append if localStorage.length then $('<input type="button" value="discard all" />').css('margin-top','10px') else $('<p>empty</p>')
@@ -223,11 +196,12 @@ $ ->
       itemElement = $("<div />", class: "item factory", id: item.id).data('item',item)
       itemElement.data 'pageElement', pageElement
       pageElement.find(".story").append(itemElement)
-      plugins.factory.emit itemElement, item
-      plugins.factory.bind itemElement, item
+      factory = getPlugin('factory')
+      factory.emit itemElement, item
+      factory.bind itemElement, item
       beforeElement = itemElement.prev('.item')
       before = getItem(beforeElement)
-      putAction pageElement, {item: item, id: item.id, type: "add", after: before?.id} 
+      putAction pageElement, {item: item, id: item.id, type: "add", after: before?.id}
 
     initDragging = ->
       storyElement = pageElement.find('.story')
@@ -317,16 +291,77 @@ $ ->
           buildPage page
           initDragging()
 
+# FUNCTIONS and HANDLERS to manage location bar and back button
+
+  setState = (state) ->
+    if History.enabled
+      url = ("/view/#{page}" for page in state.pages).join('') # + "##{state.active}"
+      History.pushState state, state.active, url
+
+  setActive = (page) ->
+    if History.enabled
+      state = History.getState().data
+      state.active = page
+      setState state
+
+  showState = (state) ->
+    # show and refresh correct pages
+    oldPages = pagesInDom()
+    newPages = state.pages
+    previousPage = newPages
+
+    return unless newPages
+
+    for name in newPages
+      if name in oldPages
+        delete oldPages[oldPages.indexOf(name)]
+      else
+        createPage(name).insertAfter(previousPage).each refresh
+      previousPage = findPage(name)
+
+    name && findPage(name).remove() for name in oldPages
+
+    # scroll to active
+    $(".active").removeClass("active")
+    scrollTo $("#"+state.active).addClass("active")
+
+  History.Adapter.bind window, 'statechange', () ->
+    showState state if state = History.getState().data
+
+  LEFTARROW = 37
+  RIGHTARROW = 39
+
+  $(document).keydown (event) ->
+    direction = switch event.which
+      when LEFTARROW then -1
+      when RIGHTARROW then +1
+    if direction && History.enabled
+      state = History.getState().data;
+      newIndex = state.pages.indexOf(state.active) + direction
+      if 0 <= newIndex < state.pages.length
+        state.active = state.pages[newIndex]
+      setState state
+
+  pagesInDom = () ->
+    $.makeArray $(".page").map (_, el) -> el.id
+
+  createPage = (name) ->
+    $("<div/>").attr('id', name).addClass("page")
+
+  findPage = (name) ->
+    $("#"+name)
+
 # HANDLERS for jQuery events
-	  
-  $(document).ajaxError (event, request, settings) ->
-    console.log [event,request,settings]
-    $('.main').prepend "<li class='error'>Error on #{settings.url}<br/>#{request.responseText}</li>"
+
+  $(document)
+    .ajaxError (event, request, settings) ->
+      console.log [event,request,settings]
+      $('.main').prepend "<li class='error'>Error on #{settings.url}<br/>#{request.responseText}</li>"
 
   $('.main')
     .delegate '.show-page-source', 'click', (e) ->
       e.preventDefault()
-      #TODO: this is a cut,paste&hack from a few lines above - refactor out 
+      #TODO: this is a cut,paste&hack from a few lines above - refactor out
       if useLocalStorage() and json = localStorage[pageElement.attr("id")]
         #set the dialog content..
         window.dialog.dialog('open');
@@ -341,6 +376,9 @@ $ ->
           window.dialog.dialog( "option", "title", "Source for: "+slug );
           window.dialog.dialog('open')
 
+    .delegate '.page', 'click', (e) ->
+      setActive this.id unless $(e.target).is("a")
+
     .delegate '.internal', 'click', (e) ->
       e.preventDefault()
       name = $(e.target).data 'pageName'
@@ -354,8 +392,7 @@ $ ->
       newPage.appendTo('.main').each refresh
       
       if History.enabled
-        pages = $.makeArray $(".page").map (_, el) -> el.id
-        History.pushState {pages: pages}, name, ("/view/#{page}" for page in pages).join ''
+        setState {pages: pagesInDom(), active: name}
 
     .delegate '.action', 'hover', ->
       $('#'+$(this).data('itemId')).toggleClass('target')
@@ -373,3 +410,6 @@ $ ->
   useLocalStorage = () -> $('#localEditing').is(':checked')
 
   $('.page').each refresh
+
+  startPages = pagesInDom()
+  setState { pages: startPages, active: startPages[startPages.length-1]}
